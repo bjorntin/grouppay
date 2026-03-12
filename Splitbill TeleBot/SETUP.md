@@ -112,7 +112,7 @@ Back in the BotFather chat, type:
 - **Short name**: `grouppay`
 
 This step isn't strictly required for the bot to work, but it formally registers the Mini App with Telegram.
-
+https://t.me/GroupPaySplitBot/grouppay
 ---
 
 ## Part 3: Configure the Bot
