@@ -1,0 +1,292 @@
+/* GroupPay Mini App — style.css */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: var(--tg-theme-bg-color, #ffffff);
+  --text: var(--tg-theme-text-color, #000000);
+  --hint: var(--tg-theme-hint-color, #999999);
+  --link: var(--tg-theme-link-color, #2481cc);
+  --btn-bg: var(--tg-theme-button-color, #2481cc);
+  --btn-text: var(--tg-theme-button-text-color, #ffffff);
+  --secondary-bg: var(--tg-theme-secondary-bg-color, #f0f0f0);
+  --radius: 12px;
+  --gap: 16px;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  padding: var(--gap);
+  min-height: 100vh;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* ── Screen management ─────────────────────────────────────────────────── */
+.screen {
+  display: none;
+  flex-direction: column;
+  gap: var(--gap);
+  animation: fadeIn 0.18s ease;
+}
+.screen.active { display: flex; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Typography ─────────────────────────────────────────────────────────── */
+h2 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.hint {
+  color: var(--hint);
+  font-size: 0.85rem;
+}
+
+/* ── Form controls ──────────────────────────────────────────────────────── */
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 500;
+}
+
+input[type="text"],
+input[type="number"] {
+  background: var(--secondary-bg);
+  border: 1.5px solid transparent;
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: var(--text);
+  font-size: 1rem;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.15s;
+}
+input[type="text"]:focus,
+input[type="number"]:focus {
+  border-color: var(--btn-bg);
+}
+
+/* GST toggle row */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--secondary-bg);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.toggle-row span { font-weight: 500; }
+
+/* pill toggle */
+.toggle-switch {
+  position: relative;
+  width: 48px;
+  height: 26px;
+}
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute;
+  inset: 0;
+  background: #ccc;
+  border-radius: 26px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.slider::before {
+  content: "";
+  position: absolute;
+  width: 20px; height: 20px;
+  left: 3px; bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+.toggle-switch input:checked + .slider { background: var(--btn-bg); }
+.toggle-switch input:checked + .slider::before { transform: translateX(22px); }
+
+/* GST breakdown */
+#gst-breakdown {
+  background: var(--secondary-bg);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.875rem;
+  color: var(--hint);
+  display: none;
+}
+#gst-breakdown.visible { display: block; }
+#gst-breakdown .row { display: flex; justify-content: space-between; }
+#gst-breakdown .total-row { font-weight: 700; color: var(--text); margin-top: 4px; }
+
+/* ── Split type buttons ─────────────────────────────────────────────────── */
+.split-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.split-btn {
+  background: var(--secondary-bg);
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+  padding: 20px 10px;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.split-btn .icon { font-size: 1.8rem; }
+.split-btn:hover,
+.split-btn.selected {
+  border-color: var(--btn-bg);
+  background: color-mix(in srgb, var(--btn-bg) 10%, var(--bg));
+}
+
+/* ── Participant list ───────────────────────────────────────────────────── */
+.add-row {
+  display: flex;
+  gap: 8px;
+}
+.add-row input { flex: 1; }
+
+.btn-small {
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border: none;
+  border-radius: 10px;
+  padding: 0 16px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-small:active { opacity: 0.8; }
+
+.participant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.participant-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--secondary-bg);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.participant-item .name { font-weight: 500; }
+.participant-item .amount { color: var(--hint); font-size: 0.9rem; }
+
+.custom-add-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+.custom-add-row .amount-input { width: 100px; }
+
+.remove-btn {
+  background: none;
+  border: none;
+  color: var(--hint);
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.per-person-note {
+  text-align: center;
+  font-weight: 600;
+  color: var(--link);
+  font-size: 0.95rem;
+}
+
+/* ── Review table ───────────────────────────────────────────────────────── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+th {
+  text-align: left;
+  color: var(--hint);
+  font-weight: 500;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--secondary-bg);
+}
+td {
+  padding: 8px;
+  border-bottom: 1px solid var(--secondary-bg);
+}
+.review-total {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 700;
+  font-size: 1rem;
+  padding: 10px 8px 0;
+}
+
+/* ── Primary action button ──────────────────────────────────────────────── */
+.btn-primary {
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border: none;
+  border-radius: var(--radius);
+  padding: 14px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  width: 100%;
+  transition: opacity 0.15s;
+}
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn-primary:not(:disabled):active { opacity: 0.8; }
+
+/* ── Back link ──────────────────────────────────────────────────────────── */
+.back-link {
+  color: var(--link);
+  cursor: pointer;
+  font-size: 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+/* ── Error banner ───────────────────────────────────────────────────────── */
+.error-banner {
+  background: #ff4444;
+  color: white;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  display: none;
+}
+.error-banner.visible { display: block; }

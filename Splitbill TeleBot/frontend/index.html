@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GroupPay</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── Screen 1: Bill Details ──────────────────────────────────────── -->
+  <section id="screen-details" class="screen active">
+    <h2>💳 New Bill</h2>
+
+    <label>
+      Event name
+      <input type="text" id="event-name" placeholder="e.g. Dinner at Saizeriya" maxlength="60" />
+    </label>
+
+    <label>
+      Subtotal (SGD)
+      <input type="number" id="subtotal" placeholder="0.00" min="0.01" step="0.01" />
+    </label>
+
+    <div class="toggle-row">
+      <span>Include GST &amp; Service Charge</span>
+      <label class="toggle-switch">
+        <input type="checkbox" id="gst-toggle" />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div id="gst-breakdown">
+      <div class="row"><span>Subtotal</span><span id="br-subtotal">$0.00</span></div>
+      <div class="row"><span>Service Charge (10%)</span><span id="br-sc">$0.00</span></div>
+      <div class="row"><span>GST on subtotal+SC (9%)</span><span id="br-gst">$0.00</span></div>
+      <div class="row total-row"><span>Total</span><span id="br-total">$0.00</span></div>
+    </div>
+
+    <div class="error-banner" id="err-details"></div>
+
+    <button class="btn-primary" id="btn-to-split">Next →</button>
+  </section>
+
+  <!-- ── Screen 2: Split Type ────────────────────────────────────────── -->
+  <section id="screen-split" class="screen">
+    <button class="back-link" id="back-to-details">← Back</button>
+    <h2>How to split?</h2>
+
+    <div class="split-options">
+      <button class="split-btn" id="btn-equal" data-type="equal">
+        <span class="icon">➗</span>
+        Equal Split
+      </button>
+      <button class="split-btn" id="btn-custom" data-type="custom">
+        <span class="icon">✏️</span>
+        Custom Amounts
+      </button>
+    </div>
+  </section>
+
+  <!-- ── Screen 3a: Equal Split Participants ─────────────────────────── -->
+  <section id="screen-equal" class="screen">
+    <button class="back-link" id="back-to-split-from-equal">← Back</button>
+    <h2>➗ Equal Split</h2>
+    <p class="hint">Add each participant's @username (without @).</p>
+
+    <div class="add-row">
+      <input type="text" id="equal-username" placeholder="username" autocomplete="off" autocapitalize="none" />
+      <button class="btn-small" id="btn-equal-add">Add</button>
+    </div>
+
+    <div class="error-banner" id="err-equal"></div>
+
+    <div class="participant-list" id="equal-list"></div>
+
+    <p class="per-person-note" id="per-person-note"></p>
+
+    <button class="btn-primary" id="btn-equal-done" disabled>Review →</button>
+  </section>
+
+  <!-- ── Screen 3b: Custom Split Participants ────────────────────────── -->
+  <section id="screen-custom" class="screen">
+    <button class="back-link" id="back-to-split-from-custom">← Back</button>
+    <h2>✏️ Custom Amounts</h2>
+    <p class="hint">Total must equal <strong id="custom-total-label">$0.00</strong>.</p>
+
+    <div class="add-row custom-add-row">
+      <input type="text" id="custom-username" placeholder="username" autocomplete="off" autocapitalize="none" />
+      <input type="number" id="custom-amount" placeholder="0.00" min="0.01" step="0.01" class="amount-input" />
+      <button class="btn-small" id="btn-custom-add">Add</button>
+    </div>
+
+    <div class="error-banner" id="err-custom"></div>
+
+    <div class="participant-list" id="custom-list"></div>
+
+    <div class="per-person-note" id="custom-remaining"></div>
+
+    <button class="btn-primary" id="btn-custom-done" disabled>Review →</button>
+  </section>
+
+  <!-- ── Screen 4: Review ────────────────────────────────────────────── -->
+  <section id="screen-review" class="screen">
+    <button class="back-link" id="back-to-participants">← Back</button>
+    <h2>Review</h2>
+
+    <table>
+      <thead>
+        <tr><th>Participant</th><th style="text-align:right">Amount</th></tr>
+      </thead>
+      <tbody id="review-tbody"></tbody>
+    </table>
+
+    <div class="review-total">
+      <span>Total</span>
+      <span id="review-total-val"></span>
+    </div>
+
+    <div class="error-banner" id="err-review"></div>
+
+    <button class="btn-primary" id="btn-confirm">✅ Confirm &amp; Send</button>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>
