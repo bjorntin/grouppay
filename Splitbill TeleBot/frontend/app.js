@@ -19,10 +19,19 @@ const state = {
   participants: [],          // [{ username, amount }]
 };
 
-// Extract group_chat_id from start_param — only relevant in bill-creation mode
-const startParam = tg.initDataUnsafe?.start_param || "";
-if (viewMode !== "qr" && startParam.startsWith("grp_")) {
-  state.groupChatId = startParam.slice(4); // remove "grp_" prefix
+// Extract group_chat_id — now embedded directly in the URL as ?chat=CHATID
+// (set by the bot when it configures the menu button for this user)
+if (viewMode !== "qr") {
+  const chatFromUrl = urlParams.get("chat");
+  if (chatFromUrl) {
+    state.groupChatId = chatFromUrl;
+  } else {
+    // Fallback: old start_param method
+    const startParam = tg.initDataUnsafe?.start_param || "";
+    if (startParam.startsWith("grp_")) {
+      state.groupChatId = startParam.slice(4);
+    }
+  }
 }
 
 // ── DOM refs ───────────────────────────────────────────────────────────────

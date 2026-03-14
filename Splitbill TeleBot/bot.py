@@ -17,8 +17,8 @@ from dotenv import load_dotenv
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardMarkup,
+    MenuButtonDefault,
+    MenuButtonWebApp,
     ReplyKeyboardRemove,
     Update,
     WebAppInfo,
@@ -186,18 +186,27 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     param = (context.args or [""])[0]
 
     if param.startswith("grp_"):
-        # Deep-link from /split in group — open the Mini App bill form
+        # Deep-link from /split in group — set the menu button to open the Mini App
         if not MINI_APP_URL:
             await update.message.reply_text("Mini App URL not configured. Ask the admin to set MINI_APP_URL.")
             return
-        keyboard = ReplyKeyboardMarkup(
-            [[KeyboardButton("🧾 Open GroupPay", web_app=WebAppInfo(url=MINI_APP_URL))]],
-            resize_keyboard=True,
-            one_time_keyboard=True,
-        )
+        # Embed the group chat ID directly in the Mini App URL so the Mini App always knows where to post
+        chat_id_str = param[4:]  # strip "grp_"
+        mini_app_url_with_group = MINI_APP_URL.rstrip("/") + f"/?chat={chat_id_str}"
+        try:
+            await context.bot.set_chat_menu_button(
+                chat_id=user.id,
+                menu_button=MenuButtonWebApp(
+                    text="🧾 Open GroupPay",
+                    web_app=WebAppInfo(url=mini_app_url_with_group),
+                ),
+            )
+        except TelegramError as e:
+            logger.warning("Could not set menu button: %s", e)
         await update.message.reply_text(
-            "Tap the button below to open GroupPay and fill in the bill details:",
-            reply_markup=keyboard,
+            "✅ Tap the *🧾 Open GroupPay* button that just appeared at the bottom-left of this chat "
+            "to fill in the bill details.",
+            parse_mode=ParseMode.MARKDOWN,
         )
     else:
         await update.message.reply_text(
@@ -394,7 +403,16 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             except TelegramError as e:
                 logger.warning("Failed to post whisper for %s: %s", handle, e)
 
-    await update.message.reply_text("✅ Bill posted to the group!", reply_markup=ReplyKeyboardRemove())
+    # Reset the menu button back to default now that the bill is submitted
+    try:
+        await context.bot.set_chat_menu_button(
+            chat_id=user.id,
+            menu_button=MenuButtonDefault(),
+        )
+    except TelegramError as e:
+        logger.warning("Could not reset menu button: %s", e)
+
+    await update.message.reply_text("✅ Bill posted to the group!")
 
 
 # ---------------------------------------------------------------------------
