@@ -4,6 +4,10 @@ const tg = window.Telegram.WebApp;
 tg.ready();
 tg.expand();
 
+// ── URL params (used for QR view mode) ────────────────────────────────────
+const urlParams = new URLSearchParams(window.location.search);
+const viewMode = urlParams.get("mode");
+
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
   groupChatId: null,
@@ -15,9 +19,9 @@ const state = {
   participants: [],          // [{ username, amount }]
 };
 
-// Extract group_chat_id from start_param (e.g. "grp_-100123456789")
+// Extract group_chat_id from start_param — only relevant in bill-creation mode
 const startParam = tg.initDataUnsafe?.start_param || "";
-if (startParam.startsWith("grp_")) {
+if (viewMode !== "qr" && startParam.startsWith("grp_")) {
   state.groupChatId = startParam.slice(4); // remove "grp_" prefix
 }
 
@@ -28,6 +32,7 @@ const screens = {
   equal:    document.getElementById("screen-equal"),
   custom:   document.getElementById("screen-custom"),
   review:   document.getElementById("screen-review"),
+  qr:       document.getElementById("screen-qr"),
 };
 
 function showScreen(name) {
@@ -170,7 +175,7 @@ function addEqualParticipant() {
   if (state.participants.some(p => p.username === username)) {
     showError("err-equal", `@${username} is already added.`); return;
   }
-  state.participants.push({ username, amount: 0 }); // amount recalculated later
+  state.participants.push({ username, amount: 0 });
   input.value = "";
   renderEqualList();
   updatePerPerson();
@@ -183,10 +188,8 @@ document.getElementById("equal-username").addEventListener("keydown", e => {
 });
 
 document.getElementById("btn-equal-done").addEventListener("click", () => {
-  // Assign equal amounts
   const n = state.participants.length;
   const each = +(state.total / n).toFixed(2);
-  // Adjust last participant for rounding
   let assigned = 0;
   state.participants.forEach((p, i) => {
     if (i < n - 1) { p.amount = each; assigned += each; }
@@ -281,7 +284,6 @@ document.getElementById("btn-custom-done").addEventListener("click", () => {
   showScreen("review");
 });
 
-// Back from review → correct screen
 document.getElementById("back-to-participants").addEventListener("click", () => {
   showScreen(state.splitType === "equal" ? "equal" : "custom");
 });
@@ -319,3 +321,46 @@ document.getElementById("btn-confirm").addEventListener("click", () => {
 
   tg.sendData(JSON.stringify(payload));
 });
+
+// ── Screen 5: QR View mode ────────────────────────────────────────────────
+// Activated when the page is opened with ?mode=qr (from the "View QR" button in the group).
+// All QR data is encoded in the URL — no backend call needed.
+if (viewMode === "qr") {
+  showScreen("qr");
+
+  const encoded = urlParams.get("p") || "";
+  const amount  = urlParams.get("a") || "0.00";
+  const event   = urlParams.get("e") || "Bill";
+  const payer   = urlParams.get("n") || "Payer";
+
+  document.getElementById("qr-event").textContent = event;
+  document.getElementById("qr-amount").textContent = `$${amount}`;
+  document.getElementById("qr-payer").textContent  = `Pay to: ${payer}`;
+
+  if (encoded) {
+    try {
+      // Decode base64url (restore padding stripped by Python)
+      const b64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+      const padded = b64 + "=".repeat((4 - b64.length % 4) % 4);
+      const payloadStr = atob(padded);
+
+      new QRCode(document.getElementById("qrcode-container"), {
+        text: payloadStr,
+        width: 240,
+        height: 240,
+        colorDark: "#6b21a8",   // purple to match bot QR style
+        colorLight: "#ffffff",
+        correctLevel: QRCode.CorrectLevel.M,
+      });
+    } catch (err) {
+      showError("err-qr", "Could not generate QR code. Please try tapping the button again.");
+    }
+  } else {
+    showError("err-qr", "QR data missing. Please tap the button in the group again.");
+  }
+
+  document.getElementById("btn-close-qr").addEventListener("click", () => {
+    if (tg && tg.close) tg.close();
+    else window.close();
+  });
+}

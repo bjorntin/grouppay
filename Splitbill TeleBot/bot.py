@@ -3,7 +3,7 @@ GroupPay Telegram Bot — MVP
 Requires: python-telegram-bot==20.7, python-dotenv, qrcode[pil], Pillow
 """
 
-import asyncio
+import base64
 import json
 import logging
 import os
@@ -11,13 +11,12 @@ import sqlite3
 import sys
 import uuid
 from datetime import datetime
-from io import BytesIO
+from urllib.parse import urlencode
 
 from dotenv import load_dotenv
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    InputFile,
     KeyboardButton,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
@@ -25,7 +24,7 @@ from telegram import (
     WebAppInfo,
 )
 from telegram.constants import ParseMode
-from telegram.error import Forbidden, TelegramError
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -42,7 +41,7 @@ from telegram.ext import (
 load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "")
-BOT_USERNAME = os.getenv("BOT_USERNAME", "")  # without @, e.g. "GroupPayBot"
+BOT_USERNAME = os.getenv("BOT_USERNAME", "")
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -50,7 +49,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# PayNow QR lives at project root — one level up from this file
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from paynow_qr import PayNowQR  # noqa: E402
 
@@ -89,60 +87,54 @@ def init_db() -> None:
             );
 
             CREATE TABLE IF NOT EXISTS bill_participants (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                bill_id     TEXT,
-                user_id     INTEGER,
-                username    TEXT,
-                amount_owed REAL,
-                is_paid     INTEGER DEFAULT 0
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                bill_id            TEXT,
+                user_id            INTEGER,
+                username           TEXT,
+                amount_owed        REAL,
+                is_paid            INTEGER DEFAULT 0,
+                whisper_message_id INTEGER
             );
         """)
+        # Migrate existing tables: add whisper_message_id if missing
+        try:
+            conn.execute("ALTER TABLE bill_participants ADD COLUMN whisper_message_id INTEGER")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
 
 
 # ---------------------------------------------------------------------------
-# Utility functions
+# Utility helpers
 # ---------------------------------------------------------------------------
 
 def short_id() -> str:
-    """8-char alphanumeric bill ID."""
     return uuid.uuid4().hex[:8]
 
 
-def to_base36(n: int) -> str:
-    """Encode integer as base-36 string (safe for callback_data)."""
-    chars = "0123456789abcdefghijklmnopqrstuvwxyz"
-    if n == 0:
-        return "0"
-    result = ""
-    while n:
-        result = chars[n % 36] + result
-        n //= 36
-    return result
-
-
-def from_base36(s: str) -> int:
-    return int(s, 36)
-
-
-def generate_qr_bytes(paynow_number: str, amount: float, name: str) -> BytesIO:
-    """Generate a PayNow QR code image in memory."""
+def build_qr_url(paynow_number: str, amount: float, event_name: str, payer_name: str) -> str | None:
+    """
+    Generate Mini App URL with PayNow QR data embedded as query params.
+    The Mini App reads these params and renders the QR client-side — no DM needed.
+    """
+    if not MINI_APP_URL:
+        return None
     mobile = paynow_number if paynow_number.startswith("+") else "+65" + paynow_number
-    qr_gen = PayNowQR(mobile, amount, name)
-    payload = qr_gen.generate_payload()
-
-    import qrcode as qrcode_lib
-    qr = qrcode_lib.QRCode(
-        error_correction=qrcode_lib.constants.ERROR_CORRECT_M,
-        box_size=10,
-        border=4,
-    )
-    qr.add_data(payload)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="purple", back_color="white")
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return buf
+    try:
+        payload = PayNowQR(mobile, amount, payer_name).generate_payload()
+    except Exception as exc:
+        logger.warning("PayNow payload generation failed: %s", exc)
+        return None
+    # Base64url-encode the payload (URL-safe, no padding)
+    encoded = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+    params = urlencode({
+        "mode": "qr",
+        "p": encoded,
+        "a": f"{amount:.2f}",
+        "e": event_name[:40],
+        "n": (payer_name or "Payer")[:20],
+    })
+    base = MINI_APP_URL.rstrip("/") + "/"
+    return f"{base}?{params}"
 
 
 def upsert_user(user_id: int, username: str | None, first_name: str | None) -> None:
@@ -160,7 +152,7 @@ def upsert_user(user_id: int, username: str | None, first_name: str | None) -> N
 
 
 def build_summary(bill_id: str) -> tuple[str, InlineKeyboardMarkup]:
-    """Build the group summary message text + inline keyboard."""
+    """Build the group summary message (text only, no inline buttons)."""
     with get_conn() as conn:
         bill = conn.execute("SELECT * FROM bills WHERE bill_id=?", (bill_id,)).fetchone()
         payer = conn.execute("SELECT * FROM users WHERE user_id=?", (bill["payer_id"],)).fetchone()
@@ -175,27 +167,12 @@ def build_summary(bill_id: str) -> tuple[str, InlineKeyboardMarkup]:
         f"Paid by: {payer_name}  |  Total: ${bill['total_amount']:.2f}{gst_label}",
         "",
     ]
-
-    buttons = []
     for p in participants:
-        handle = f"@{p['username']}" if p["username"] else f"User {p['user_id']}"
+        handle = f"@{p['username']}" if p["username"] else f"User {p['id']}"
         status = "✅ Paid" if p["is_paid"] else "⏳"
         lines.append(f"{handle}  ${p['amount_owed']:.2f}   {status}")
-        if not p["is_paid"] and p["user_id"]:
-            uid_b36 = to_base36(p["user_id"])
-            buttons.append(
-                InlineKeyboardButton(
-                    f"Get QR 💳 — {handle}",
-                    callback_data=f"qr:{bill_id}:{uid_b36}",
-                )
-            )
 
-    keyboard = []
-    # Two buttons per row
-    for i in range(0, len(buttons), 2):
-        keyboard.append(buttons[i : i + 2])
-
-    return "\n".join(lines), InlineKeyboardMarkup(keyboard) if keyboard else InlineKeyboardMarkup([])
+    return "\n".join(lines), InlineKeyboardMarkup([])
 
 
 # ---------------------------------------------------------------------------
@@ -206,18 +183,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     upsert_user(user.id, user.username, user.first_name)
 
-    args = context.args  # list of words after /start
-    param = args[0] if args else ""
+    param = (context.args or [""])[0]
 
     if param.startswith("grp_"):
-        # Deep-link from group — send WebApp keyboard
-        raw_chat_id = param  # keep full "grp_XXXX" as start_param for Mini App
+        # Deep-link from /split in group — open the Mini App bill form
         if not MINI_APP_URL:
             await update.message.reply_text("Mini App URL not configured. Ask the admin to set MINI_APP_URL.")
             return
-
-        context.user_data["pending_group"] = param  # store for reference
-
         keyboard = ReplyKeyboardMarkup(
             [[KeyboardButton("🧾 Open GroupPay", web_app=WebAppInfo(url=MINI_APP_URL))]],
             resize_keyboard=True,
@@ -231,54 +203,44 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             f"👋 Hi {user.first_name}! I'm GroupPay.\n\n"
             "• Use /register to save your PayNow number.\n"
-            "• Add me to a group and use /split to create a bill.\n\n"
-            "Everyone in the group should DM me /start once so I can send you QR codes.",
+            "• Add me to a group and use /split to create a bill.\n"
         )
 
 
 async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Start PayNow registration flow."""
     if update.effective_chat.type != "private":
         await update.message.reply_text("Please DM me to register your PayNow number.")
         return
-
     user = update.effective_user
     upsert_user(user.id, user.username, user.first_name)
-
     args = context.args
     if args:
         await _save_paynow(update, context, args[0])
     else:
         context.user_data["awaiting_paynow"] = True
-        await update.message.reply_text(
-            "Please send your PayNow mobile number (e.g. 91234567):"
-        )
+        await update.message.reply_text("Please send your PayNow mobile number (e.g. 91234567):")
 
 
 async def _save_paynow(update: Update, context: ContextTypes.DEFAULT_TYPE, number: str) -> None:
     number = number.strip().lstrip("+65").strip()
     if not number.isdigit() or len(number) != 8:
-        await update.message.reply_text("Invalid number. Please send an 8-digit Singapore mobile number (e.g. 91234567).")
+        await update.message.reply_text(
+            "Invalid number. Please send an 8-digit Singapore mobile number (e.g. 91234567)."
+        )
         return
-
     user = update.effective_user
     with get_conn() as conn:
-        conn.execute(
-            "UPDATE users SET paynow_number=? WHERE user_id=?",
-            (number, user.id),
-        )
+        conn.execute("UPDATE users SET paynow_number=? WHERE user_id=?", (number, user.id))
     context.user_data.pop("awaiting_paynow", None)
     await update.message.reply_text(f"✅ PayNow number {number} saved!")
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle plain text messages (used for PayNow registration flow)."""
     if context.user_data.get("awaiting_paynow"):
         await _save_paynow(update, context, update.message.text)
 
 
 async def cmd_split(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Group command — post deep-link button."""
     if update.effective_chat.type == "private":
         await update.message.reply_text("Use /split in a group chat.")
         return
@@ -287,14 +249,12 @@ async def cmd_split(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
     upsert_user(user.id, user.username, user.first_name)
 
-    # Check payer is registered
     with get_conn() as conn:
         row = conn.execute("SELECT paynow_number FROM users WHERE user_id=?", (user.id,)).fetchone()
 
     if not row or not row["paynow_number"]:
         await update.message.reply_text(
-            "⚠️ You need to register your PayNow number first.\n"
-            "DM me: /register"
+            "⚠️ You need to register your PayNow number first.\nDM me: /register"
         )
         return
 
@@ -303,9 +263,7 @@ async def cmd_split(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     deep_link = f"https://t.me/{BOT_USERNAME}?start=grp_{chat.id}"
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📱 Open GroupPay ↗", url=deep_link)]
-    ])
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("📱 Open GroupPay ↗", url=deep_link)]])
     await update.message.reply_text(
         "💳 *GroupPay*\nTap below to fill in bill details:",
         parse_mode=ParseMode.MARKDOWN,
@@ -336,7 +294,6 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not group_chat_id_str:
         await update.message.reply_text("Missing group_chat_id. Please try again via /split.")
         return
-
     try:
         group_chat_id = int(group_chat_id_str)
     except (ValueError, TypeError):
@@ -355,7 +312,7 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
     bill_id = short_id()
     now = datetime.utcnow().isoformat()
 
-    # Resolve usernames → user_ids
+    # Save bill + participants to DB
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO bills (bill_id, group_chat_id, payer_id, event_name, total_amount, gst_applied, created_at) "
@@ -374,7 +331,7 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
                 (bill_id, uid, uname, amount),
             )
 
-    # Build and post group summary
+    # Post group summary (status board, no buttons)
     summary_text, markup = build_summary(bill_id)
     try:
         msg = await context.bot.send_message(
@@ -389,108 +346,110 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
                 (msg.message_id, bill_id),
             )
     except TelegramError as e:
-        logger.error("Failed to post to group %s: %s", group_chat_id, e)
+        logger.error("Failed to post summary to group %s: %s", group_chat_id, e)
         await update.message.reply_text(f"Failed to post to group: {e}")
         return
 
-    # Clean up DM keyboard and confirm
-    await update.message.reply_text(
-        "✅ Bill posted to the group!",
-        reply_markup=ReplyKeyboardRemove(),
-    )
+    # Post per-participant whisper QR messages in the group
+    with get_conn() as conn:
+        payer_row = conn.execute("SELECT * FROM users WHERE user_id=?", (user.id,)).fetchone()
+        participants_db = conn.execute(
+            "SELECT * FROM bill_participants WHERE bill_id=? ORDER BY id", (bill_id,)
+        ).fetchall()
+
+    if payer_row and payer_row["paynow_number"]:
+        for part in participants_db:
+            handle = f"@{part['username']}" if part["username"] else f"User {part['id']}"
+            qr_url = build_qr_url(
+                payer_row["paynow_number"],
+                part["amount_owed"],
+                event_name,
+                payer_row["first_name"] or "Payer",
+            )
+
+            buttons: list[list[InlineKeyboardButton]] = []
+            if qr_url:
+                # url= button works in group chats and opens the Mini App in Telegram's in-app browser.
+                # Only the person who taps it sees the QR — it opens as a private overlay.
+                buttons.append([InlineKeyboardButton("👁  View QR & Pay 💳", url=qr_url)])
+            # paid: callback — only the right person can confirm (verified by user_id or username)
+            buttons.append([InlineKeyboardButton("✅  I've Paid", callback_data=f"paid:{bill_id}:{part['id']}")])
+
+            try:
+                whisper_msg = await context.bot.send_message(
+                    chat_id=group_chat_id,
+                    text=(
+                        f"🔒 {handle} — *${part['amount_owed']:.2f}* for _{event_name}_\n"
+                        f"Tap *View QR* to get your PayNow QR code.\n"
+                        f"Tap *I've Paid* after you've transferred."
+                    ),
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=InlineKeyboardMarkup(buttons),
+                )
+                with get_conn() as conn:
+                    conn.execute(
+                        "UPDATE bill_participants SET whisper_message_id=? WHERE id=?",
+                        (whisper_msg.message_id, part["id"]),
+                    )
+            except TelegramError as e:
+                logger.warning("Failed to post whisper for %s: %s", handle, e)
+
+    await update.message.reply_text("✅ Bill posted to the group!", reply_markup=ReplyKeyboardRemove())
 
 
 # ---------------------------------------------------------------------------
 # Callback query handlers
 # ---------------------------------------------------------------------------
 
-async def callback_get_qr(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """callback_data: qr:{bill_id}:{uid_b36}"""
+async def callback_paid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    callback_data: paid:{bill_id}:{row_id}
+    Verifies the clicker is the right person (by user_id or @username).
+    No pre-registration required — username match works for anyone in the group.
+    """
     query = update.callback_query
-    _, bill_id, uid_b36 = query.data.split(":", 2)
-    participant_uid = from_base36(uid_b36)
-    clicker_uid = query.from_user.id
-
-    if clicker_uid != participant_uid:
-        await query.answer("This QR is not for you 😅", show_alert=True)
+    parts = query.data.split(":", 2)
+    if len(parts) != 3:
+        await query.answer("Invalid button.", show_alert=True)
+        return
+    _, bill_id, row_id_str = parts
+    try:
+        row_id = int(row_id_str)
+    except ValueError:
+        await query.answer("This button is outdated. Please recreate the bill.", show_alert=True)
         return
 
     with get_conn() as conn:
-        bill = conn.execute("SELECT * FROM bills WHERE bill_id=?", (bill_id,)).fetchone()
-        payer = conn.execute("SELECT * FROM users WHERE user_id=?", (bill["payer_id"],)).fetchone()
-        part = conn.execute(
-            "SELECT * FROM bill_participants WHERE bill_id=? AND user_id=?",
-            (bill_id, participant_uid),
-        ).fetchone()
+        part = conn.execute("SELECT * FROM bill_participants WHERE id=?", (row_id,)).fetchone()
 
-    if not bill or not payer or not part:
-        await query.answer("Bill not found.", show_alert=True)
+    if not part:
+        await query.answer("Participant not found.", show_alert=True)
         return
 
-    if part["is_paid"]:
-        await query.answer("You've already paid! ✅", show_alert=True)
-        return
-
-    paynow_number = payer["paynow_number"]
-    if not paynow_number:
-        await query.answer("Payer has no PayNow number registered.", show_alert=True)
-        return
-
-    uid_b36_str = to_base36(participant_uid)
-    paid_button = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ I've Paid", callback_data=f"paid:{bill_id}:{uid_b36_str}")]
-    ])
-
-    try:
-        buf = generate_qr_bytes(paynow_number, part["amount_owed"], payer["first_name"] or "Payer")
-        sent = await context.bot.send_photo(
-            chat_id=participant_uid,
-            photo=InputFile(buf, filename="paynow_qr.png"),
-            caption=(
-                f"💳 *{bill['event_name']}*\n"
-                f"Amount: ${part['amount_owed']:.2f}\n"
-                f"Pay to: {payer['first_name']} via PayNow"
-            ),
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=paid_button,
-        )
-        # Store sent message id for later edit
-        context.bot_data.setdefault("qr_messages", {})[f"{bill_id}:{participant_uid}"] = (
-            participant_uid,
-            sent.message_id,
-        )
-        await query.answer("QR sent to your DM! 📱")
-    except Forbidden:
-        bot_link = f"@{BOT_USERNAME}" if BOT_USERNAME else "the bot"
-        await query.answer(
-            f"Please start me in DM first: {bot_link}",
-            show_alert=True,
-        )
-
-
-async def callback_paid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """callback_data: paid:{bill_id}:{uid_b36}"""
-    query = update.callback_query
-    _, bill_id, uid_b36 = query.data.split(":", 2)
-    participant_uid = from_base36(uid_b36)
+    # Allow match by user_id (if known) or by @username (no prior /start needed)
     clicker_uid = query.from_user.id
-
-    if clicker_uid != participant_uid:
+    clicker_uname = (query.from_user.username or "").lower()
+    is_match = (
+        (part["user_id"] and clicker_uid == part["user_id"]) or
+        (part["username"] and clicker_uname == part["username"].lower())
+    )
+    if not is_match:
         await query.answer("This button is not for you 😅", show_alert=True)
         return
 
+    if part["is_paid"]:
+        await query.answer("Already marked as paid! ✅", show_alert=True)
+        return
+
     with get_conn() as conn:
-        conn.execute(
-            "UPDATE bill_participants SET is_paid=1 WHERE bill_id=? AND user_id=?",
-            (bill_id, participant_uid),
-        )
+        conn.execute("UPDATE bill_participants SET is_paid=1 WHERE id=?", (row_id,))
         bill = conn.execute("SELECT * FROM bills WHERE bill_id=?", (bill_id,)).fetchone()
 
     if not bill:
         await query.answer("Bill not found.", show_alert=True)
         return
 
-    # Update group message
+    # Update the group summary board
     summary_text, markup = build_summary(bill_id)
     try:
         await context.bot.edit_message_text(
@@ -501,23 +460,21 @@ async def callback_paid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             reply_markup=markup,
         )
     except TelegramError as e:
-        logger.warning("Could not edit group message: %s", e)
+        logger.warning("Could not update group summary: %s", e)
 
-    # Edit DM QR message
-    key = f"{bill_id}:{participant_uid}"
-    qr_msg_info = context.bot_data.get("qr_messages", {}).get(key)
-    if qr_msg_info:
-        dm_chat_id, dm_msg_id = qr_msg_info
+    # Edit the whisper message to show confirmed and remove buttons
+    if part["whisper_message_id"]:
+        handle = f"@{part['username']}" if part["username"] else "You"
         try:
-            await context.bot.edit_message_caption(
-                chat_id=dm_chat_id,
-                message_id=dm_msg_id,
-                caption=f"✅ Payment confirmed for *{bill['event_name']}*",
+            await context.bot.edit_message_text(
+                chat_id=bill["group_chat_id"],
+                message_id=part["whisper_message_id"],
+                text=f"✅ {handle} paid *${part['amount_owed']:.2f}* for _{bill['event_name']}_",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup([]),
             )
         except TelegramError as e:
-            logger.warning("Could not edit DM QR message: %s", e)
+            logger.warning("Could not edit whisper message: %s", e)
 
     await query.answer("Payment recorded! ✅")
 
@@ -542,7 +499,6 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, handle_text))
 
-    app.add_handler(CallbackQueryHandler(callback_get_qr, pattern=r"^qr:"))
     app.add_handler(CallbackQueryHandler(callback_paid, pattern=r"^paid:"))
 
     logger.info("Bot ready. Press Ctrl+C to stop.")

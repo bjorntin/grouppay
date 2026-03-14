@@ -31,7 +31,6 @@ BotFather replies with:
 Done! Your bot token is:
 123456789:ABCdefGHIjklMNOpqrSTUvwxYZ
 ```
-TOKEN I GOT: 8616935012:AAEp1raouLovkij5BgddL2PB6Uc8kZuAHts
 
 **Copy and save this token — you'll need it soon.**
 
@@ -65,7 +64,7 @@ Go to [github.com](https://github.com) → Sign up (free).
 
 ### Step 6 — Push your project to GitHub
 
-Open a terminal in your project folder (`E:/Y3S2/CS206/Project`) and run:
+Open a terminal in your project folder and run:
 
 ```bash
 git init
@@ -76,7 +75,7 @@ git remote add origin https://github.com/YOUR_USERNAME/grouppay.git
 git push -u origin main
 ```
 
-Replace `YOUR_USERNAME` with your GitHub username and `grouppay` with your repo name.
+Replace `YOUR_USERNAME` with your GitHub username.
 
 ### Step 7 — Enable GitHub Pages
 
@@ -111,15 +110,13 @@ Back in the BotFather chat, type:
   ```
 - **Short name**: `grouppay`
 
-This step isn't strictly required for the bot to work, but it formally registers the Mini App with Telegram.
-https://t.me/GroupPaySplitBot/grouppay
 ---
 
 ## Part 3: Configure the Bot
 
 ### Step 9 — Create the `.env` file
 
-In `Splitbill TeleBot/`, create a file named exactly `.env` (no filename, just the extension):
+In `Splitbill TeleBot/`, create a file named exactly `.env`:
 
 ```
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxYZ
@@ -140,13 +137,6 @@ cd "Splitbill TeleBot"
 pip install -r requirements.txt
 ```
 
-If `pip` isn't found, try `pip3` or `python -m pip`.
-
-This installs:
-- `python-telegram-bot` — the bot framework
-- `python-dotenv` — reads your `.env` file
-- `qrcode` + `Pillow` — generates the PayNow QR images
-
 ### Step 11 — Run the bot
 
 ```bash
@@ -162,61 +152,80 @@ The bot is now live. **Keep this terminal open** — closing it stops the bot.
 
 ---
 
-## Part 4: First-Time User Setup
+## Part 4: First-Time Setup (Bill Payer Only)
 
-Every person who wants to use GroupPay needs to do this **once**:
+Only the person who paid the bill needs to do this once.
 
-### Step 12 — Everyone: Start the bot in DM
-
-In Telegram, search for your bot (e.g. `@GroupPaySplitBot`) → tap **Start**.
-
-This is required so the bot can DM you later (Telegram blocks unsolicited DMs).
-
-### Step 13 — The bill payer: Register PayNow
-
-The person who paid the bill (and wants to receive money) must register:
+### Step 12 — The bill payer: Register PayNow
 
 1. DM the bot: `/register`
 2. Bot asks for your PayNow number
 3. Reply with your 8-digit Singapore mobile number, e.g. `91234567`
 4. Bot replies: `✅ PayNow number 91234567 saved!`
 
+> **Everyone else (participants) does NOT need to do anything in advance.**
+> No pre-registration, no `/start`, no DM required.
+
 ---
 
 ## Part 5: Using GroupPay
 
-### Step 14 — Add the bot to your group
+### Step 13 — Add the bot to your group
 
 1. Open your group chat
 2. Tap the group name → **Add Members**
 3. Search for your bot → Add it
 
-### Step 15 — Create a bill split
+### Step 14 — Create a bill split
 
 1. **In the group**, type `/split`
 2. Bot posts a message with a **📱 Open GroupPay ↗** button
 3. Tap it — Telegram opens a DM with the bot
+
+   > **Why DM?** Telegram only allows Mini Apps to submit form data back to the bot
+   > from a private chat. This is a Telegram platform limitation — the bill form
+   > itself opens normally, and results are posted back to the group automatically.
+
 4. Bot sends a **🧾 Open GroupPay** keyboard button — tap it
 5. The Mini App opens in Telegram
 
-### Step 16 — Fill in the bill
+### Step 15 — Fill in the bill
 
 The Mini App has 4 screens:
 
 1. **Bill Details** — enter event name, subtotal, toggle GST+SC if applicable
-2. **Split type** — Equal (everyone pays the same) or Custom (specify each person's amount)
+2. **Split type** — Equal or Custom amounts
 3. **Participants** — add each person by their Telegram @username (without @)
-4. **Review** — confirm everything looks right → tap **✅ Confirm & Send**
+4. **Review** — confirm everything → tap **✅ Confirm & Send**
 
-### Step 17 — Participants get their QR codes
+### Step 16 — QR codes appear in the group
 
-After submitting:
-- The group receives a summary showing everyone's amount and payment status (⏳)
-- Each participant taps their **Get QR 💳** button
-- The bot sends them a PayNow QR code in DM
-- They scan it with their banking app and pay
-- They tap **✅ I've Paid** in the DM
-- The group message updates to show ✅ for that person
+After submitting, the group receives **two types of messages**:
+
+1. **Summary board** — shows everyone's name, amount owed, and payment status (⏳ / ✅)
+2. **One whisper message per participant** — e.g.:
+   ```
+   🔒 @alice — $25.50 for Dinner at Saizeriya
+   Tap View QR to get your PayNow QR code.
+   Tap I've Paid after you've transferred.
+   [👁 View QR & Pay 💳]  [✅ I've Paid]
+   ```
+
+### Step 17 — Each participant pays
+
+Each person's whisper message has two buttons:
+
+- **👁 View QR & Pay 💳** — opens a private Mini App overlay showing their PayNow QR code.
+  Scan it with any Singapore banking app (PayLah!, PayNow, DBS, POSB, etc.) and transfer.
+  The QR is generated on the spot and visible only to the person who taps it.
+
+- **✅ I've Paid** — tap this after transferring. The bot verifies you're the right person
+  (matched by your Telegram @username or user ID). Once confirmed:
+  - Your whisper message updates to ✅ and buttons are removed
+  - The summary board updates to show ✅ for your name
+
+> **No pre-registration needed.** Participants just tap the buttons directly.
+> They do not need to have messaged the bot before.
 
 ---
 
@@ -224,11 +233,12 @@ After submitting:
 
 | Who | Does what | Where |
 |-----|-----------|-------|
-| Everyone | `/start` | DM the bot |
-| Bill payer | `/register` | DM the bot |
+| Bill payer | `/register` | DM the bot (once) |
 | Bill payer | `/split` | Group chat |
-| Each participant | Tap "Get QR 💳" | Group chat |
-| Each participant | Tap "I've Paid" | DM from bot |
+| Bill payer | Fill in bill form | Mini App (via DM link) |
+| Each participant | Tap "View QR" | Group whisper message |
+| Each participant | Scan QR, pay | Banking app |
+| Each participant | Tap "I've Paid" | Group whisper message |
 
 ---
 
@@ -239,6 +249,7 @@ After submitting:
 | Bot doesn't see `/split` in group | Check `/setprivacy → Disable` in BotFather (Step 3) |
 | "Bot URL not configured" | Check `MINI_APP_URL` in `.env` ends with `/` |
 | Mini App opens blank | Wait a few min for GitHub Pages to deploy; check the URL works in a browser |
-| "Please start me in DM" error | That participant needs to do Step 12 |
+| QR screen shows "QR data missing" | Tap the "View QR" button again; the URL may have been truncated |
+| "This button is not for you 😅" | You tapped someone else's I've Paid button |
 | `pip install` fails | Make sure Python 3.9+ is installed: `python --version` |
 | `.env` not loading | Make sure the file is named `.env` (not `env.txt` or `.env.txt`) |
